@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS to Google Sheets Logger</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-md w-full glass p-8 rounded-3xl shadow-2xl border border-slate-200">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold text-slate-800">Location Logger</h1>
+            <p class="text-slate-500 mt-2 text-sm">Capture your address and save it to Google Sheets</p>
+        </div>
+
+        <div class="space-y-6">
+            <!-- Configuration Inputs (In real app, you might hide these) -->
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Google Maps API Key</label>
+                    <input type="password" id="apiKey" class="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="Enter API Key...">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Google Sheets Web App URL</label>
+                    <input type="text" id="sheetUrl" class="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="https://script.google.com/macros/s/...">
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <button id="locateBtn" onclick="processLocation()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+                <span>Get & Save Location</span>
+            </button>
+
+            <!-- Results Display -->
+            <div id="statusContainer" class="hidden space-y-4 animate-in fade-in duration-500">
+                <div class="p-4 bg-slate-100 rounded-2xl text-sm border border-slate-200">
+                    <div id="log" class="space-y-2 text-slate-600 font-mono text-[11px]">
+                        <!-- Dynamic Logs -->
+                    </div>
+                </div>
+
+                <div id="resultBox" class="p-5 bg-blue-50 border border-blue-100 rounded-2xl hidden">
+                    <p class="text-xs font-bold text-blue-400 uppercase mb-2">Current Address</p>
+                    <p id="addressText" class="text-slate-700 font-medium"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const logElement = document.getElementById('log');
+        const statusContainer = document.getElementById('statusContainer');
+        const resultBox = document.getElementById('resultBox');
+        const addressText = document.getElementById('addressText');
+        const locateBtn = document.getElementById('locateBtn');
+
+        function addLog(message, type = 'info') {
+            const colors = {
+                info: 'text-slate-500',
+                success: 'text-green-600',
+                error: 'text-red-600',
+                loading: 'text-blue-600'
+            };
+            const div = document.createElement('div');
+            div.className = `flex items-center gap-2 ${colors[type]}`;
+            div.innerHTML = `<span>${type === 'loading' ? '<div class="loader"></div>' : '•'}</span> <span>${message}</span>`;
+            logElement.appendChild(div);
+            statusContainer.classList.remove('hidden');
+        }
+
+        async function processLocation() {
+            const apiKey = document.getElementById('apiKey').value;
+            const sheetUrl = document.getElementById('sheetUrl').value;
+
+            if (!apiKey) {
+                addLog('Please enter your Google Maps API Key', 'error');
+                return;
+            }
+
+            // Reset UI
+            logElement.innerHTML = '';
+            resultBox.classList.add('hidden');
+            locateBtn.disabled = true;
+            locateBtn.classList.add('opacity-50');
+
+            try {
+                // 1. Get Lat/Lng
+                addLog('Requesting GPS coordinates...', 'loading');
+                const position = await getCoordinates();
+                const { latitude, longitude } = position.coords;
+                addLog(`Success: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`, 'success');
+
+                // 2. Get Address from Google Maps
+                addLog('Fetching address from Google Geocoding API...', 'loading');
+                const address = await getAddress(latitude, longitude, apiKey);
+                addressText.innerText = address;
+                resultBox.classList.remove('hidden');
+                addLog('Address resolved successfully', 'success');
+
+                // 3. Save to Google Sheets
+                if (sheetUrl) {
+                    addLog('Saving to Google Sheets...', 'loading');
+                    await saveToSheet(sheetUrl, latitude, longitude, address);
+                    addLog('Data logged to cloud successfully', 'success');
+                } else {
+                    addLog('Google Sheet URL missing - skipped saving', 'info');
+                }
+
+            } catch (error) {
+                addLog(error.message, 'error');
+            } finally {
+                locateBtn.disabled = false;
+                locateBtn.classList.remove('opacity-50');
+            }
+        }
+
+        function getCoordinates() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    reject(new Error('Geolocation not supported by your browser'));
+                }
+                navigator.geolocation.getCurrentPosition(resolve, (err) => {
+                    reject(new Error('Permission denied or GPS signal lost'));
+                });
+            });
+        }
+
+        async function getAddress(lat, lng, key) {
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${key}`;
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.status === 'OK' && data.results.length > 0) {
+                return data.results[0].formatted_address;
+            } else {
+                throw new Error(`Geocoding failed: ${data.status} ${data.error_message || ''}`);
+            }
+        }
+
+        async function saveToSheet(url, lat, lng, address) {
+            // Using no-cors mode is often necessary for simple Apps Script triggers 
+            // but standard fetch with JSON is better if your script handles CORS.
+            // We'll send as URL parameters to the doGet() in Apps Script for highest compatibility.
+            const queryParams = new URLSearchParams({
+                timestamp: new Date().toISOString(),
+                lat: lat,
+                lng: lng,
+                address: address
+            });
+
+            try {
+                // Note: Apps Script usually requires a redirect. 
+                // Using 'mode: no-cors' avoids some preflight issues but you won't see the response body.
+                await fetch(`${url}?${queryParams.toString()}`, {
+                    method: 'GET',
+                    mode: 'no-cors' 
+                });
+                return true;
+            } catch (e) {
+                throw new Error('Failed to connect to Google Sheets Web App');
+            }
+        }
+    </script>
+</body>
+</html>
